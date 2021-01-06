@@ -50,44 +50,44 @@ class CSfuncForJulia:
 		cg.add_include("stdlib.h")
 		for f in funs:
 			cg.add(f)
-			cg.generate(compilation_folder+os.sep)
+		cg.generate(compilation_folder+os.sep)
 
-			with open(os.path.join(compilation_folder,self.name+".c"),"a") as out:
+		with open(os.path.join(compilation_folder,self.name+".c"),"a") as out:
+			out.write("""
+						typedef struct {
+						const double** arg;
+						double** res;
+						casadi_int* iw;
+						double* w;
+						int mem;
+						} casadi_mem;
+						""")
+			for f in funs:
+				in_arg = ", ".join(["const double * in%d" % i for i in range(f.n_in())])
+				out_arg = ", ".join(["double * out%d" % i for i in range(f.n_out())])
+				set_in = "\n      ".join(["mem.arg[{i}] = in{i};".format(i=i) for i in range(f.n_in())])
+				set_out = "\n      ".join(["mem.res[{i}] = out{i};".format(i=i) for i in range(f.n_out())])
 				out.write("""
-							typedef struct {
-							const double** arg;
-							double** res;
-							casadi_int* iw;
-							double* w;
-							int mem;
-							} casadi_mem;
-							""")
-				for f in funs:
-					in_arg = ", ".join(["const double * in%d" % i for i in range(f.n_in())])
-					out_arg = ", ".join(["double * out%d" % i for i in range(f.n_out())])
-					set_in = "\n      ".join(["mem.arg[{i}] = in{i};".format(i=i) for i in range(f.n_in())])
-					set_out = "\n      ".join(["mem.res[{i}] = out{i};".format(i=i) for i in range(f.n_out())])
-					out.write("""
-								CASADI_SYMBOL_EXPORT int simplified_{name}({in_arg}, {out_arg}) {{
-								static int initialized = 0;
-								static casadi_mem mem;
-								if (!initialized) {{
-								casadi_int sz_arg, sz_res, sz_iw, sz_w;
-								{name}_work(&sz_arg, &sz_res, &sz_iw, &sz_w);
-								mem.arg = malloc(sizeof(void*)*sz_arg);
-								mem.res = malloc(sizeof(void*)*sz_res);
-								mem.iw = malloc(sizeof(casadi_int)*sz_iw);
-								mem.w = malloc(sizeof(casadi_int)*sz_w);
-								{name}_incref();
-								mem.mem = {name}_checkout();
-								}};
-								{set_in}
-								{set_out}
-								return {name}(mem.arg, mem.res, mem.iw, mem.w, mem.mem);
-								}}
-								""".format(name=f.name(), in_arg=in_arg, out_arg=out_arg, set_in=set_in, set_out=set_out))
+							CASADI_SYMBOL_EXPORT int simplified_{name}({in_arg}, {out_arg}) {{
+							static int initialized = 0;
+							static casadi_mem mem;
+							if (!initialized) {{
+							casadi_int sz_arg, sz_res, sz_iw, sz_w;
+							{name}_work(&sz_arg, &sz_res, &sz_iw, &sz_w);
+							mem.arg = malloc(sizeof(void*)*sz_arg);
+							mem.res = malloc(sizeof(void*)*sz_res);
+							mem.iw = malloc(sizeof(casadi_int)*sz_iw);
+							mem.w = malloc(sizeof(casadi_int)*sz_w);
+							{name}_incref();
+							mem.mem = {name}_checkout();
+							}};
+							{set_in}
+							{set_out}
+							return {name}(mem.arg, mem.res, mem.iw, mem.w, mem.mem);
+							}}
+							""".format(name=f.name(), in_arg=in_arg, out_arg=out_arg, set_in=set_in, set_out=set_out))
 
-					subprocess.Popen(["gcc","-O0","-shared","-fPIC",os.path.join(compilation_folder,self.name+".c"),"-o",os.path.join(compilation_folder,self.name+".so")]).wait()
+				subprocess.Popen(["gcc","-O0","-shared","-fPIC",os.path.join(compilation_folder,self.name+".c"),"-o",os.path.join(compilation_folder,self.name+".so")]).wait()
 
 		self.lib_path = compilation_folder+'/'+self.name+'.so'
 
