@@ -3,7 +3,7 @@
 # @Email:  massimo.demauri@protonmail.com
 # @Filename: MPCmachine.py
 # @Last modified by:   massimo
-# @Last modified time: 2021-01-06T11:36:38+01:00
+# @Last modified time: 2021-01-06T12:48:46+01:00
 # @License: LGPL-3.0
 
 import casadi as cs
@@ -144,7 +144,7 @@ class MPCmachine:
             'obj': oc.CSfuncForJulia('obj',[self.mpc_problem.var['sym']]+param_symbols,self.mpc_problem.obj['exp'])
         }
 
-        # compile the parametric functions created
+        compile the parametric functions created
         self.test['cns'].compile(oc.home_dir+'/temp_jit_files')
         self.test['obj'].compile(oc.home_dir+'/temp_jit_files')
         purposeful_error
@@ -176,11 +176,6 @@ class MPCmachine:
         param_vals = [input_vals['t']]+[input_vals[i.nme] for i in self.model.i]+\
                      [self.state_hystory[v.nme] for v in self.model.x+self.model.z]
 
-
-        print(self.test['cns'].param_names)
-        print(self.state_hystory.keys())
-        print(input_vals.keys())
-
         # generate the problem to solve in this iteration
         for k in range(self.model_info['num_states']):
             self.mpc_problem.var['lob'][k] = measured_state[self.mpc_problem.var['nme'][k]]
@@ -190,7 +185,7 @@ class MPCmachine:
 
 
         # solve problem
-        sol_stats = mioct.solve_with_bonmin(self.mpc_problem,{'print_level':1,'mi_solver_name':'cplex'})
+        sol_stats = oc.solve_with_bonmin(self.mpc_problem,{'print_level':1,'mi_solver_name':'cplex'})
         results = self.mpc_problem.get_grouped_variables_value()
 
         return results

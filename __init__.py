@@ -3,7 +3,7 @@
 # @Email:  massimo.demauri@protonmail.com
 # @Filename: __init__.py
 # @Last modified by:   massimo
-# @Last modified time: 2021-01-06T10:41:02+01:00
+# @Last modified time: 2021-01-06T12:47:34+01:00
 # @License: LGPL-3.0
 
 
@@ -24,6 +24,7 @@ from .src.utils.casadiUtils                                         import *
 from .src.utils.ParametricFunction                                  import *
 from .src.utils.mathUtils                                           import *
 from .src.utils.CSfuncForJulia                                      import CSfuncForJulia
+from .src.utils.solve_with_bonmin                                   import solve_with_bonmin
 
 # import main components
 from .src.problem_formulation                                       import *
