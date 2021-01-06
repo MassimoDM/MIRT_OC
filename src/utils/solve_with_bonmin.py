@@ -6,14 +6,16 @@ Created on Tue Oct 10 15:14:34 2017
 @author: Massimo De Mauri
 """
 
-import MIOCtoolbox as oc
-
-
+from time import time
+from warnings import warn
+import casadi as cs
+from casadi.tools import capture_stdout, nice_stdout
+from re import search as search_in_string
 
 def solve_with_bonmin(problem,options=None):
 
 
-    start_t = oc.now()
+    start_t = time()
 
     # default options
     opts = {}
@@ -37,7 +39,7 @@ def solve_with_bonmin(problem,options=None):
             if k in opts:
                 opts[k] = options[k]
             else:
-                oc.warn('solve_with_bonmin - option not recognized: ' + k)
+                warn('solve_with_bonmin - option not recognized: ' + k)
 
 
 
@@ -95,7 +97,7 @@ def solve_with_bonmin(problem,options=None):
 
 
 
-    sol = oc.nlpsol('solver_name','bonmin', prob,sol_opts)
+    sol = cs.nlpsol('solver_name','bonmin', prob,sol_opts)
 
     arg = {}
     arg['x0'] =  problem.var['val']
@@ -106,17 +108,17 @@ def solve_with_bonmin(problem,options=None):
         arg['lbg'] = problem.cns['lob']
         arg['ubg'] = problem.cns['upb']
 
-    start_time_ = oc.now()
-    with oc.capture_stdout() as solver_out:
-        with oc.nice_stdout():
+    start_time_ = time()
+    with capture_stdout() as solver_out:
+        with nice_stdout():
             out = sol.call(arg)
-    solution_time = oc.now()-start_time_
+    solution_time = time()-start_time_
 
     # scan the solver output for information
     lines = solver_out[0].split('\n')
     iterations = 0
     for k in range(len(lines)):
-        match = oc.search_in_string(r'Performed [0-9]+', lines[k])
+        match = search_in_string(r'Performed [0-9]+', lines[k])
         if not match is None:
             iterations = int(match.group(0).split(' ')[1])
             break
@@ -127,7 +129,7 @@ def solve_with_bonmin(problem,options=None):
 
 
     stats = sol.stats()
-    stats['total_time'] = oc.now()-start_t
+    stats['total_time'] = time()-start_t
     stats['solution_time'] = solution_time
     stats['max_violation'] = problem.get_max_violation()
     stats['num_iterations'] = iterations

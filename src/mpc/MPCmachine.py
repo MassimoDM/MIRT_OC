@@ -3,7 +3,7 @@
 # @Email:  massimo.demauri@protonmail.com
 # @Filename: MPCmachine.py
 # @Last modified by:   massimo
-# @Last modified time: 2021-01-06T12:48:46+01:00
+# @Last modified time: 2021-01-06T12:51:05+01:00
 # @License: LGPL-3.0
 
 import casadi as cs
@@ -12,8 +12,6 @@ import MIRT_OC as oc
 from warnings import warn
 from time import time
 from copy import deepcopy
-import MIOCtoolbox as mioct
-
 
 class MPCmachine:
 
