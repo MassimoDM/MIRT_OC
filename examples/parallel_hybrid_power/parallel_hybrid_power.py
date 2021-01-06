@@ -10,7 +10,6 @@ import csv
 import casadi as cs
 import numpy as np
 import MIRT_OC as oc
-import MIOCtoolbox as mioct
 
 import matplotlib.pyplot as plt
 import matplotlib.patches as ptc
@@ -276,7 +275,7 @@ measured_state = {'SoC':SoC_start,'F':TNK_Finit,'OFFstate':1.0,'GEARstate':0.0}
 # solve
 for mode in modes:
     if mode == 0:
-        
+
         # keep an eye on the total time
         start_time = time()
 
