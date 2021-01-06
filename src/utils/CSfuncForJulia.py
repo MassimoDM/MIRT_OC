@@ -59,7 +59,7 @@ class CSfuncForJulia:
 						double** res;
 						casadi_int* iw;
 						double* w;
-						int mem;
+						void* mem;
 						} casadi_mem;
 						""")
 			for f in funs:
@@ -79,7 +79,7 @@ class CSfuncForJulia:
 							mem.iw = malloc(sizeof(casadi_int)*sz_iw);
 							mem.w = malloc(sizeof(casadi_int)*sz_w);
 							{name}_incref();
-							mem.mem = {name}_checkout();
+							mem.mem = 0;//{name}_checkout();
 							}};
 							{set_in}
 							{set_out}
@@ -87,7 +87,7 @@ class CSfuncForJulia:
 							}}
 							""".format(name=f.name(), in_arg=in_arg, out_arg=out_arg, set_in=set_in, set_out=set_out))
 
-				subprocess.Popen(["gcc","-O0","-shared","-fPIC",os.path.join(compilation_folder,self.name+".c"),"-o",os.path.join(compilation_folder,self.name+".so")]).wait()
+		subprocess.Popen(["gcc","-O0","-shared","-fPIC",os.path.join(compilation_folder,self.name+".c"),"-o",os.path.join(compilation_folder,self.name+".so")]).wait()
 
 		self.lib_path = compilation_folder+'/'+self.name+'.so'
 
