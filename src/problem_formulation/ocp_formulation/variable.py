@@ -8,7 +8,7 @@ Created on Wed Jun  7 12:40:29 2017
 from casadi import *
 from numpy import inf, amin, amax
 class variable:
-    def __init__(self,ref ='v',lob=-inf,upb=inf,val=None,dsc=False,lbl = ''):
+    def __init__(self,ref ='v',lob=-inf,upb=inf,val=None,lbl = ''):
 
         if ref is None:
             self.nme = None
@@ -42,21 +42,9 @@ class variable:
 
 
 
-
-        if type(dsc) == type(1):
-            dsc = dsc == 1
-        assert type(dsc) == type(True)
-
-        self.dsc = dsc
-
     def __str__(self):
 
-
-        if self.dsc:
-            out = str(self.lob) + " <= [" + self.nme + "] <= " + str(self.upb)
-        else:
-            out = str(self.lob) + " <= " + self.nme + " <= " + str(self.upb)
-
+        out = str(self.lob) + " <= " + self.nme + " <= " + str(self.upb)
 
         if DM(self.val).numel() > 1:
             out += '    (val = ' + str(DM(self.val).numel()) + ' elements in [' + str(amin(DM(self.val))) + ',' +str(amax(DM(self.val))) + '])'
@@ -66,7 +54,7 @@ class variable:
         return out
 
     def copy(self):
-        return variable(self.nme,self.lob,self.val,self.dsc)
+        return variable(self.nme,self.lob,self.val)
 
     def deepcopy(self):
-        return variable(self.nme,self.lob,self.val,self.dsc)
+        return variable(self.nme,self.lob,self.val)

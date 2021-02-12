@@ -1,40 +1,45 @@
 # @Author: Massimo De Mauri <massimo>
 # @Date:   2021-01-05T17:58:29+01:00
 # @Email:  massimo.demauri@protonmail.com
-# @Filename: CSfuncForJulia.py
+# @Filename: CvxFuncForJulia.py
 # @Last modified by:   massimo
-# @Last modified time: 2021-01-06T10:35:09+01:00
+# @Last modified time: 2021-01-14T18:44:44+01:00
 # @License: LGPL-3.0
 
 import casadi as cs
+import MIRT_OC as oc
 import subprocess
 import os
 
-class CSfuncForJulia:
+class CvxFuncForJulia:
 	def __init__(self,name,syms,expression):
 
 		# info
 		self.name = name
-		self.main_sym = syms[0]
-		self.param_syms = syms[1:]
-		self.param_names = [s.name() for s in self.param_syms]
-		self.main_sizes = (self.main_sym.numel(),expression.numel())
-		self.param_sizes = tuple(self.param_syms[i].numel() for i in range(len(self.param_syms)))
+		self.sizes = (syms[0].numel(),expression.numel(),sum([s.numel() for s in syms[1:]]))
+
+		# use a single parameter for the expression (because julia sucks sometimes)
+		self.param_sym = oc.MX.sym("P",self.sizes[2])
+		self.param_names = [s.name() for s in syms[1:]]
+		expression_ = cs.substitute(expression,cs.vcat(syms[1:]),self.param_sym)
 
 		# expression evaluation
-		self.eval = cs.Function('eval',syms,[expression])
+		self.eval = cs.Function('eval',[syms[0],self.param_sym],[expression_]).expand()
+
+		# collect the sx version of the symbols
+		sx_syms = self.eval.sx_in()
+		self.main_sym = sx_syms[0]
 
 		# expression jacobian
-		jacobian = cs.jacobian(expression,syms[0])
-		self.jac_nnz = jacobian.nnz()
-		self.jac_sparsity = jacobian.sparsity().get_triplet()
-		self.eval_jac = cs.Function('eval_jac',syms,[jacobian])
+		jacobian = cs.jacobian(expression_,syms[0])
+		self.eval_jac = cs.Function('eval_jac',[syms[0],self.param_sym],[jacobian]).expand()
 
 		# hessian of each of the elements of the expression
-		hessian = [cs.hessian(expression[i],syms[0])[0] for i in range(expression.shape[0])]
-		self.hes_nnz = [hessian[i].nnz() for i in range(expression.shape[0])]
-		self.hes_sparsity = [hessian[i].sparsity().get_triplet() for i in range(expression.shape[0])]
-		self.eval_hes = [cs.Function('eval_hes'+str(i),syms,[hessian[i]]) for i in range(expression.shape[0])]
+		split_eval = [cs.Function('eval',[syms[0],self.param_sym],[expression_[i]]).expand() for i in range(expression_.shape[0]) ]
+		hessian = [cs.hessian(split_eval[i](*sx_syms),sx_syms[0])[0]  for i in range(expression_.shape[0])]
+		self.eval_hes = [cs.Function('eval_hes'+str(i),sx_syms,[hessian[i]]).expand() for i in range(expression.shape[0])]
+
+
 
 		# location of the compiled library
 		self.lib_path = None
@@ -91,30 +96,49 @@ class CSfuncForJulia:
 
 		self.lib_path = compilation_folder+'/'+self.name+'.so'
 
-	def pack_for_julia(self,param_values,compilation_folder=""):
+	def pack_for_julia(self,param_values,extra_info={}):
 		if self.lib_path is None:
-			if len(compilation_folder)==0:
-				raise NameError("pack_for_julia : CSfuncForClib not yet compiled")
-			elif len(compilation_folder)>0:
-				self.compile(compilation_folder)
-
-		return {'param_values':[param_values[name] for name in self.param_names],
-				'sizes':self.main_sizes,
-				'jac_nnz':self.jac_nnz,
-				'jac_sparsity':self.jac_sparsity,
-				'hes_nnz':self.hes_nnz,
-				'hes_sparsity':self.hes_sparsity,
-				'lib_path':self.lib_path}
+			raise NameError("CvxFuncForJulia : missing compilation step")
 
 
-if __name__ == "__main__":
-	from casadi import *
-	DM.rng(0)
-	A = DM(Sparsity.lower(5),DM.rand(15))
-	x = MX.sym("x",5)
-	y = MX.sym("y",5)
+		param_vector = []
+		for name in self.param_names:
+			if type(param_values[name]) == list:
+				param_vector.extend(param_values[name])
+			elif type(param_values[name]) in [type(cs.DM()),type(cs.MX()),type(cs.SX())]:
+				param_vector.extend(oc.cs2list(param_values[name]))
+			else:
+				param_vector.extend(oc.list(param_values[name]))
 
-	z = A @ x+y
-	c = CSfuncForClib('foo',[x,y],z)
-	print("numerical check",c.eval_jac([1,2,3,4,5],[2,1,3,4,5]))
-	c.compile("dest")
+
+		# construct hessian and jacobian
+		jacobian = self.eval_jac(self.main_sym,param_vector)
+		jcb_nnz = jacobian.nnz()
+		jcb_sparsity = jacobian.sparsity().get_triplet()
+
+		hessian = [self.eval_hes[i](self.main_sym,param_vector) for i in range(self.sizes[1])]
+		hes_nnz = [hessian[i].nnz() for i in range(self.sizes[1])]
+		hes_sparsity = [hessian[i].sparsity().get_triplet() for i in range(self.sizes[1])]
+
+
+		if self.sizes[1] > 1:
+			pack = {'param_vector':param_vector,
+					'sizes':self.sizes,
+					'jcb_nnz':jcb_nnz,
+					'jcb_sparsity':jcb_sparsity,
+					'hes_nnz':hes_nnz,
+					'hes_sparsity':hes_sparsity,
+					'lib_path':self.lib_path}
+		else:
+			pack = {'param_vector':param_vector,
+					'sizes':self.sizes,
+					'grd_nnz':jcb_nnz,
+					'grd_sparsity':jcb_sparsity[1],
+					'hes_nnz':hes_nnz[0],
+					'hes_sparsity':hes_sparsity[0],
+					'lib_path':self.lib_path}
+
+		# add possible extra information
+		pack.update(extra_info)
+
+		return pack

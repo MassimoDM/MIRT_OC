@@ -143,21 +143,18 @@ TNK_Finit = TNK_Frat/2
 SoC_opt  =  SoC_min + 0.75*(SoC_max - SoC_min)
 SoC_start = SoC_min + 0.1*(SoC_max - SoC_min)
 
-# create optimal control model
-model = oc.oc_problem('Simple Traditional Drivetrain')
 
-# time vector
-model.t = oc.input('t',time_vec)
+
+
+# create optimal control model
+model = oc.oc_problem('Parallel Hybrid Drivetrain')
 
 # external inputs
 model.i = [oc.input('cycle',cycle_dat), oc.input('dcycle',dcycle_dat)]
 cycle = model.i[0].sym
 dcycle = model.i[1].sym
-
-
-# variable parameters
-SoCcoeff = oc.variable('SoCcoeff',-oc.Inf,oc.Inf,0)
-model.p = [SoCcoeff]
+SoCcoeff = oc.input('SoCcoeff',oc.DM.zeros(time_vec.numel()))
+model.i.append(SoCcoeff)
 
 # differential states
 SoC = oc.variable('SoC',SoC_min,SoC_max,SoC_start)
@@ -167,28 +164,30 @@ model.x = [SoC,Fuel]
 # discrete transition states
 OFFstate = oc.variable('OFFstate',0,1,1)
 GEARstate = oc.variable('GEARstate',0,5,0)
-model.z =  [OFFstate,GEARstate]
+model.y =  [OFFstate,GEARstate]
 
-# slack variables
-Cost = oc.variable('Cost_slack',-oc.inf,oc.inf,0)
-model.s = [Cost]
+# algebraic variables
+model.a = []
 
-# controls
-G = [oc.variable('G'+str(k+1),0,1,int(k==0),True) for k in range(len(R))]
-OFF = oc.variable('OFF',0,1,1,True)
+# continuous controls
 dFuel = oc.variable('dF',0,20.0,0)
+Pb = oc.variable('Pb',BT_Pmin(BT_Erat,1.0),BT_Pmax(BT_Erat,1.0),0)
 Pice = oc.variable('Pice',0,ICE_Prat,0)
 Pem = oc.variable('Pem',-EM_Prat,EM_Prat,0)
-Pb = oc.variable('Pb',BT_Pmin(BT_Erat,1.0),BT_Pmax(BT_Erat,1.0),0)
-sw = oc.variable('sw',0,oc.inf,0)
-model.c = [dFuel,Pice,Pem,Pb,sw,OFF] + G
+switch = oc.variable('switch',0,oc.inf,0)
+model.u = [dFuel,Pice,Pb,Pem,switch]
+
+#discrete controls
+OFF = oc.variable('OFF',0,1,1)
+G = [oc.variable('G'+str(k+1),0,1,int(k==0)) for k in range(len(R))]
+model.v = [OFF] + G
 
 # ode
 model.ode = [BT_dSoC(BT_Erat,SoC.sym,Pb.sym),-dFuel.sym]
 
 # discrete transitions
 gear = sum([(k+1)*G[k].sym for k in range(len(R))])
-model.dtr = [OFF.sym-OFFstate.sym, gear-GEARstate.sym]
+model.itr = [OFF.sym-OFFstate.sym, gear-GEARstate.sym]
 
 # precalculations
 mass = base_mass + ICE_mass(ICE_Prat) + EM_mass(EM_Prat) + BT_mass(BT_Erat)
@@ -206,10 +205,10 @@ GEAR_ = sum([(k+1)*G[k].sym for k in range(len(R))])
 model.pcns =  [oc.geq(Pem.sym+Pice.sym,Preq)]+\
               \
               [oc.eq(sum([G[k].sym for k in range(len(R))]) + OFF.sym,1)]+\
-              [oc.leq(OFF.sym-OFFstate.sym, sw.sym)]+\
-              [oc.geq(OFF.sym-OFFstate.sym,-sw.sym)]+\
-              [oc.leq(GEAR_-GEARstate.sym, 5*sw.sym)]+\
-              [oc.geq(GEARstate.sym-GEAR_,-5*sw.sym)]+\
+              [oc.leq(OFF.sym-OFFstate.sym, switch.sym)]+\
+              [oc.geq(OFF.sym-OFFstate.sym,-switch.sym)]+\
+              [oc.leq(GEAR_-GEARstate.sym, 5*switch.sym)]+\
+              [oc.geq(GEARstate.sym-GEAR_,-5*switch.sym)]+\
               \
               [oc.leq(wice,ICE_wrat*0.5)]+\
               [oc.leq(ICE_minw*(1-OFF.sym),wice)]+\
@@ -222,105 +221,237 @@ model.pcns =  [oc.geq(Pem.sym+Pice.sym,Preq)]+\
               [oc.leq(EM_Pin(EM_Prat,wem,Pem.sym)[k] + Paux,BT_Pout(BT_Erat,SoC.sym,Pb.sym)) for k in range(EM_Pin(0,0,0).numel())]+\
               \
               [oc.leq(Pem.sym, EM_Prat)]+\
-              [oc.geq(Pem.sym,-EM_Prat)]#+\
-
-
-              # [oc.leq(Pem.sym, EM_Pmax(EM_Prat,wem) + (wem==0)*EM_Prat)]+\
-              # [oc.geq(Pem.sym,-EM_Pmax(EM_Prat,wem) + (wem==0)*EM_Prat)]
-
-              # [oc.leq((1e2*SoCcoeff.sym*BT_Erat*(SoC_opt-SoC.sym))**2,Cost.sym)]
-              # [oc.leq(Pem.sym, EM_Pmax(EM_Prat,wem))]+\
-              # [oc.geq(Pem.sym,-EM_Pmax(EM_Prat,wem))]
-
-
-              # [oc.leq(((2.5*ICE_wrat/4-wice)/ICE_wrat)**2,0.4*OFF.sym +  (.25/4)**2)]+\
-
+              [oc.geq(Pem.sym,-EM_Prat)]
 
 # sos1 constraints
 # model.sos1 = [oc.sos1_constraint([v.nme for v in G]+['OFF'],cs.vertcat(*[r.sym for r in R]+[0]))]
 
-# boundary constraints
-model.fcns = [oc.leq((100*BT_Erat*SoCcoeff.sym*(SoC_opt-SoC.sym))**2,Cost.sym)]
-
 # objective
-model.may = Cost.sym
-model.lag = dFuel.sym
-model.dpn = sw.sym*ICE_Fstart(ICE_Prat) - 200*BT_Erat*BT_dSoC(BT_Erat,SoC.sym,Pb.sym) # 200g/kWh is the maximum theoretical efficiency for engines
+model.lag = (0.4*45.6*dFuel.sym+Pb.sym)
+model.dpn = 0.4*45.6*ICE_Fstart(ICE_Prat)*switch.sym
+model.may = 200*(-cs.log((SoC.sym-SoC_min)/(SoC_max-SoC_min)) - cs.log((SoC_max-SoC.sym)/(SoC_max-SoC_min)) + 2*cs.log(.5))
+
+# model.may = (200*BT_Erat*SoCcoeff.sym*(1-SoC.sym))**2 # 200g/kWh is the maximum theoretical efficiency for engines
+model.epigraph_reformulation(max_order = 2,integration_opts={'schema':'rk4','n_steps':1})
+
 print(model)
 print('\n---------------------------------------------------------------------------------')
 
+
+# define expression for SoCcoeff
+SoCcoeff_f = cs.Function('SoCcoeff',[v.sym for v in model.x+model.y],[1.0 - (SoC_max-SoC_min)/(SoC_max-SoC.sym + SoC_max-SoC_min)],
+                                    [v.nme for v in model.x+model.y],['out'])
+
+
+# solve
 modes = [0]
 save_graphs = False
 integration_opts = {'schema':'rk4','n_steps':1}
 stats = {}
-RTL = 3 # relaxed tail length
-PHL = 2 # prediction window length
-shift_size = 1
-num_iterations = 10
 
+
+RTL = 0 # relaxed tail length
+PHL = 15 # prediction window length
+shift_size = 1
+num_iterations = 12
+subsolverName = 'CLP'
+conservativism_level = 2
+nlpProcesses = 1
+mipProcesses = 1
+shift_style = None
+shift_style = "relaxationOnly"
+shift_style = "warmStart"
+# shift_style = "fullRTI"
 
 # create container for results
-results = {'t':cs.DM(list(range(num_iterations+PHL+1)))};
+results = {'t':cs.DM(list(range(num_iterations-1+PHL+1)))};
 for i in model.i:
-    results[i.nme] = cs.DM(i.val[:num_iterations+PHL+1])
-for v in model.x + model.z + model.s:
-    results[v.nme] = cs.DM.zeros(num_iterations+PHL+1)
-for v in model.c:
-    results[v.nme] = cs.DM.zeros(num_iterations+PHL)
+    results[i.nme] = cs.DM.zeros(num_iterations-1+PHL+1)
+for v in model.x + model.y + model.a:
+    results[v.nme] = cs.DM.zeros(num_iterations-1+PHL+1)
+for v in model.u+model.v:
+    results[v.nme] = cs.DM.zeros(num_iterations-1+PHL)
 
-
-# define the first measured state
-measured_state = {'SoC':SoC_start,'F':TNK_Finit,'OFFstate':1.0,'GEARstate':0.0}
 
 # solve
 for mode in modes:
-    if mode == 0:
+    if mode == 0: # new MI-MPC using MIRT-OC
 
-        # keep an eye on the total time
-        start_time = time()
-
-        model.t.val = model.t.val[:num_iterations+PHL+RTL]
-        for k in range(len(model.i)):
-            model.i[k].val = model.i[k].val[:num_iterations+PHL+RTL]
-
-        fig_name = 'bonmin_'+str(start)+':'+str(dt)+':'+str(start+wl)
+        fig_name = 'MIRTOC_'+str(start)+':'+str(dt)+':'+str(start+wl)
         mpc_options = {'max_iteration_time':oc.inf,
-                       'minlp_solver_opts':{'printLevel':0,'primalTolerance':1e-4,'mi_solver_name':'Cplex'},
-                       'shifting_strategy':None,
+                       'OpenBB_opts':{'verbose':True,'conservativismLevel':conservativism_level,"relativeGapTolerance":1e-4,
+                                      'nlpProcesses':nlpProcesses,'mipProcesses':mipProcesses,'nlpStepType':('OAnlpStep',),
+                                      'nlpSettings':{'subsolverName':'IPOPT','constr_viol_tol':1e-5},
+                                      'mipSettings':{'verbose':True,
+                                                     'withBoundsPropagation':False,
+                                                     'expansionPriorityRule':("lower_dualTradeoff",),
+                                                     'subsolverSettings':{'subsolverName':subsolverName}}},
                        'integration_opts':integration_opts,
                        'prediction_horizon_length':PHL,'relaxed_tail_length':RTL,
-                       'printLevel':1,
-                       'time_invariant_terminals':False,
-                       'variable_parameters_exp':{'SoCcoeff':1.0 - (SoC_max-SoC_min)/(SoC_max-SoC.sym + SoC_max-SoC_min)}}
-
+                       'printLevel':1}
 
         # generate the mpc controller
-        mpc_machine = oc.MPCmachine(model,'bonmin',mpc_options)
+        mpc_machine = oc.MPCmachine(model,mpc_options)
+
+        # define the first measured state
+        measured_state = {'SoC':SoC_start,'F':TNK_Finit,'OFFstate':1.0,'GEARstate':0.0}
+
+        # collect the first parameters values
+        input_values = {'t':time_vec[:PHL+RTL+1],
+                        'cycle':cycle_dat[:PHL+RTL+1],
+                        'dcycle':dcycle_dat[:PHL+RTL+1],
+                        'SoCcoeff':SoCcoeff_f.call(measured_state)['out']*cs.DM.ones(PHL+RTL+1)}
+
 
         # MPC iterations
         k0 = 0
+        start_time = time()
         for i in range(num_iterations):
 
-            print('Iteration: ',i+1)
-
-            # collect the new parameter values
-            input_values = {'t':time_vec[k0:k0+PHL+RTL+1],'cycle':cycle_dat[k0:k0+PHL+RTL+1],'dcycle':dcycle_dat[k0:k0+PHL+RTL+1]}
+            print('MPC: Iteration =',i+1)
 
             # perform mpc iteration
-            iteration_results = mpc_machine.iterate(measured_state,input_values)
+            iteration_objective, iteration_results = mpc_machine.iterate(measured_state,input_values,shift_style,0)
+
+            print("MPC: Optimal Objective =",iteration_objective)
 
             # fill in the newest results
-            for v in model.x + model.z + model.s:
+            for v in model.x + model.y + model.a:
                 results[v.nme][k0:k0+PHL+1] = iteration_results[v.nme][:PHL+1]
-            for v in model.c:
+            for v in model.u + model.v:
                 results[v.nme][k0:k0+PHL] = iteration_results[v.nme][:PHL]
 
             # update the initial timestep
             k0 += shift_size
 
             # update the measured state
-            for v in model.x + model.z:
+            for v in model.x: measured_state[v.nme] = results[v.nme][k0]
+            for v in model.y: measured_state[v.nme] = round(float(results[v.nme][k0]))
+
+            # update the input values
+            input_values = {'t':time_vec[k0:k0+PHL+RTL+1],
+                            'cycle':cycle_dat[k0:k0+PHL+RTL+1],
+                            'dcycle':dcycle_dat[k0:k0+PHL+RTL+1],
+                            'SoCcoeff':cs.vertcat(input_values['SoCcoeff'][shift_size:],
+                                                  SoCcoeff_f.call(measured_state)['out']*cs.DM.ones(shift_size))
+                            }
+
+
+    elif mode == 1: # standard MI-MPC using bonmin
+
+        fig_name = 'bonmin_'+str(start)+':'+str(dt)+':'+str(start+wl)
+        mpc_options = {'max_iteration_time':oc.inf,
+                       'minlp_solver_opts':{'printLevel':0,'primalTolerance':1e-4,'mi_solver_name':'Cplex'},
+                       'integration_opts':integration_opts,
+                       'prediction_horizon_length':PHL,'relaxed_tail_length':RTL,
+                       'printLevel':1}
+
+
+        # generate the mpc controller
+        mpc_machine = oc.MPCmachine_bonmin(model,mpc_options)
+
+        # MPC iterations
+        k0 = 0
+
+        # define the first measured state
+        measured_state = {'SoC':SoC_start,'F':TNK_Finit,'OFFstate':1.0,'GEARstate':0.0}
+
+        # collect the first parameters values
+        input_values = {'t':time_vec[:PHL+RTL+1],
+                        'cycle':cycle_dat[:PHL+RTL+1],
+                        'dcycle':dcycle_dat[:PHL+RTL+1],
+                        'SoCcoeff':SoCcoeff_f.call(measured_state)['out']*cs.DM.ones(PHL+RTL+1)}
+
+        start_time = time()
+        for i in range(num_iterations):
+
+            print('Iteration: ',i+1)
+
+            # perform mpc iteration
+            iteration_results = mpc_machine.iterate(measured_state,input_values)
+
+            # fill in the newest results
+            for v in model.x + model.y + model.a:
+                results[v.nme][k0:k0+PHL+1] = iteration_results[v.nme][:PHL+1]
+            for v in model.u + model.v:
+                results[v.nme][k0:k0+PHL] = iteration_results[v.nme][:PHL]
+            for v in model.i:
+                results[v.nme][k0:k0+PHL+1] = input_values[v.nme][:PHL+1]
+
+            # update the initial timestep
+            k0 += shift_size
+
+            # update the measured state
+            for v in model.x + model.y:
                 measured_state[v.nme] = results[v.nme][k0]
+
+            # update the input values
+            input_values = {'t':time_vec[k0:k0+PHL+RTL+1],
+                            'cycle':cycle_dat[k0:k0+PHL+RTL+1],
+                            'dcycle':dcycle_dat[k0:k0+PHL+RTL+1],
+                            'SoCcoeff':cs.vertcat(input_values['SoCcoeff'][shift_size:],
+                                                  SoCcoeff_f.call(measured_state)['out']*cs.DM.ones(shift_size))
+                           }
+
+
+
+    elif mode == 2: # standard MI-MPC using POA
+
+        fig_name = 'POA_'+str(start)+':'+str(dt)+':'+str(start+wl)
+        mpc_options = {'max_iteration_time':oc.inf,
+                       'minlp_solver_opts':{'printLevel':0,'primalTolerance':1e-4,'mi_solver_name':'Cplex'},
+                       'integration_opts':integration_opts,
+                       'prediction_horizon_length':PHL,'relaxed_tail_length':RTL,
+                       'printLevel':1}
+
+
+        # generate the mpc controller
+        mpc_machine = oc.MPCmachine_POA(model,mpc_options)
+
+        # MPC iterations
+        k0 = 0
+
+        # define the first measured state
+        measured_state = {'SoC':SoC_start,'F':TNK_Finit,'OFFstate':1.0,'GEARstate':0.0}
+
+        # collect the first parameters values
+        input_values = {'t':time_vec[:PHL+RTL+1],
+                        'cycle':cycle_dat[:PHL+RTL+1],
+                        'dcycle':dcycle_dat[:PHL+RTL+1],
+                        'SoCcoeff':SoCcoeff_f.call(measured_state)['out']*cs.DM.ones(PHL+RTL+1)}
+
+        start_time = time()
+        for i in range(num_iterations):
+
+            print('Iteration: ',i+1)
+
+            # perform mpc iteration
+            iteration_results = mpc_machine.iterate(measured_state,input_values)
+
+            # fill in the newest results
+            for v in model.x + model.y + model.a:
+                results[v.nme][k0:k0+PHL+1] = iteration_results[v.nme][:PHL+1]
+            for v in model.u + model.v:
+                results[v.nme][k0:k0+PHL] = iteration_results[v.nme][:PHL]
+            for v in model.i:
+                results[v.nme][k0:k0+PHL+1] = input_values[v.nme][:PHL+1]
+
+            # update the initial timestep
+            k0 += shift_size
+
+            # update the measured state
+            for v in model.x + model.y:
+                measured_state[v.nme] = results[v.nme][k0]
+
+            # update the input values
+            input_values = {'t':time_vec[k0:k0+PHL+RTL+1],
+                            'cycle':cycle_dat[k0:k0+PHL+RTL+1],
+                            'dcycle':dcycle_dat[k0:k0+PHL+RTL+1],
+                            'SoCcoeff':cs.vertcat(input_values['SoCcoeff'][shift_size:],
+                                                  SoCcoeff_f.call(measured_state)['out']*cs.DM.ones(shift_size))
+                           }
+
+
 
 
     for k in range(len(R)):
@@ -330,7 +461,9 @@ for mode in modes:
 
 
     print('\n---------------------------------------------------------------------------------')
-    print('Total time: ',time()-start_time)
+    print('Solution time: ',time()-start_time)
+    print('Timings: ',mpc_machine.stats['times'])
+    print('#Solves: ',mpc_machine.stats['num_solves'])
     print('---------------------------------------------------------------------------------\n')
 
 
@@ -481,8 +614,6 @@ for mode in modes:
 
     cmap = cm.nipy_spectral
     colors  = [(.2,.2,.2)] +[cmap(int(i*cmap.N/len(dsc_labels))) for i in range(1,len(dsc_labels))]
-
-
 
     for i in range(len(dsc_labels)):
         for t in range(time_vec.numel()-1):

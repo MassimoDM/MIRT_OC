@@ -6,4 +6,4 @@
 # @Last modified time: 2020-12-30T12:30:02+01:00
 # @License: LGPL-3.0
 
-from .multipleShooting import *
+from .multiple_shooting import *

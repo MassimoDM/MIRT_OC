@@ -3,7 +3,7 @@
 # @Email:  massimo.demauri@protonmail.com
 # @Filename: __init__.py
 # @Last modified by:   massimo
-# @Last modified time: 2021-01-06T12:47:34+01:00
+# @Last modified time: 2021-01-18T12:35:51+01:00
 # @License: LGPL-3.0
 
 
@@ -18,21 +18,31 @@ from numpy import *
 from casadi import *
 from casadi.tools import capture_stdout, nice_stdout
 from re import search as search_in_string
+import importlib.util
 
 # import some generic code
 from .src.utils.casadiUtils                                         import *
 from .src.utils.ParametricFunction                                  import *
 from .src.utils.mathUtils                                           import *
-from .src.utils.CSfuncForJulia                                      import CSfuncForJulia
 from .src.utils.solve_with_bonmin                                   import solve_with_bonmin
-
+from .src.utils.proximalOA                                          import proximalOA
 # import main components
 from .src.problem_formulation                                       import *
 from .src.integration                                               import *
 from .src.shooting                                                  import *
+from .src.openbb_interface                                          import *
 from .src.mpc                                                       import *
-from .src.minlp_solvers_interfaces                                  import *
 
+
+# openbb interface
+spec = importlib.util.spec_from_file_location("openbb", environ['OPENBB_HOME']+"/alternative_interfaces/OpenBB.py")
+openbb = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(openbb)
+
+# mpc addon
+spec = importlib.util.spec_from_file_location("openbb", environ['OPENBB_HOME']+"/addons/MPCaddon/alternative_interfaces/OpenMPC.py")
+mpc_addon = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mpc_addon)
 
 # home directory
 home_dir = os.path.dirname(os.path.realpath(__file__))

@@ -19,7 +19,7 @@ def solve_with_bonmin(problem,options=None):
 
     # default options
     opts = {}
-    opts['algorithm'] = 'BB'
+    opts['algorithm'] = 'QG'
     opts['linear_solver'] = 'ma27'
     opts['mi_solver_name'] = 'Cplex'
     opts['nl_solver_name'] = 'Ipopt'

@@ -161,3 +161,6 @@ def is_numeric(v):
 
 def is_symbolic(v):
     return type(v) in [type(cs.MX()),type(cs.SX())]
+
+def cs2list(arr):
+    return [float(arr[k]) for k in range(arr.numel())]

@@ -3,7 +3,7 @@
 # @Email:  massimo.demauri@protonmail.com
 # @Filename: MPCmachine.py
 # @Last modified by:   massimo
-# @Last modified time: 2021-01-06T13:04:17+01:00
+# @Last modified time: 2021-02-12T15:16:08+01:00
 # @License: LGPL-3.0
 
 import casadi as cs
@@ -15,26 +15,22 @@ from copy import deepcopy
 
 class MPCmachine:
 
-    def __init__(self,model,minlp_solver,options = dict()):
+    def __init__(self,model,options = dict()):
 
         # declare object fields
         self.model = model
-        self.state_hystory = None
-        self.minlp_solver = minlp_solver
         self.options = {}
         self.model_info = {}
         self.stats = {}
-        self.parametric_definitions = None
-        self.memory_space = {}
-
+        self.problem_functions = None
+        self.status = "new"
+        self.clib_id = -1
 
         # default options
         self.options['printLevel'] = 0
-        self.options['minlp_solver_opts'] = None
+        self.options['OpenBB_opts'] = {'numProcesses':1}
         self.options['integration_opts'] = None
         self.options['max_iteration_time'] = cs.inf
-        self.options['shifting_strategy'] = None # available: rti, conservative, hespanhol
-        self.options['time_invariant_terminals'] = False
         self.options['relaxed_tail_length'] = 0
         self.options['prediction_horizon_length'] = 1
         self.options['variable_parameters_exp'] = {}
@@ -49,29 +45,19 @@ class MPCmachine:
 
 
         # check the model
-        syms_ = [v.sym for v in model.x]+[v.sym for v in model.z]+[v.sym for v in model.s]+[v.sym for v in model.c]
+        syms_ = [v.sym for v in model.x]+[v.sym for v in model.y]+[v.sym for v in model.a]+[v.sym for v in model.u + model.v]
+        if len(model.p) > 0 : raise NameError('MPCmachine is not suited to optimize parameters, please fix them or give them a state dependent expression using the \'varing_parameters_exp\' option')
+        if len(model.icns) > 0 : raise NameError('MPCmachine: initial constraints not supported')
         obj_ = 0.0
         if not model.lag is None: obj_ += model.lag
         if not model.dpn is None: obj_ += model.dpn
         if not model.may is None: obj_ += model.may
-        if oc.get_order(obj_,syms_) >= 2:
+        if oc.get_order(obj_,syms_) > 2 :
             raise NameError("Objectives with order higher than 2 are not currently supported. Please, perform an epigraph reformulation of the objective.")
 
-
-        for v in model.p:
-            if v.nme not in self.options['variable_parameters_exp'].keys():
-                raise NameError('MPCmachine is not suited to optimize parameters, please fix them or give them a state dependent expression using the \'varing_parameters_exp\' option')
-
-        if len(model.icns)>0: raise NameError('MPCmachine: initial constraints not supported')
-
-        if self.minlp_solver != 'openbb' and (not self.options['shifting_strategy'] is None):
-            raise NameError('MPCmachine: '+self.minlp_solver+' does not support the selected shifting strategy. Select \"None\" istead')
-
-
-
         # prepare collection of performace statistics
-        self.stats['times'] = {'total':0.,'preprocessing':0.,'iterations':{'total':0.,'pre/post-processing':0.,'minlp_solver':{'nlp':0.,'mip':0.,'linearizations_generation':0.}}}
-        self.stats['num_solves'] = {'nlp':0,'mip':0}
+        self.stats['times'] = {'total':0.,'preprocessing':0.,'iterations':{'total':0.,'pre/post-processing':0.,'minlp_solver':{'total':0.,'nlp':0.,'mip':0.,'linearizations_generation':0.}}}
+        self.stats['num_solves'] = {'nlp':0,'qp':0}
 
 
         ##############################################################################################
@@ -84,106 +70,151 @@ class MPCmachine:
         # collect info
         PHL = self.options['prediction_horizon_length']
         RTL = self.options['relaxed_tail_length']
-        self.model_info['num_states'] = num_states = len(model.x)+len(model.z)
-        self.model_info['num_slacks'] = num_slacks = len(model.s)
-        self.model_info['num_controls'] = num_controls = len(model.c)
+        self.model_info['num_states'] = num_states = len(model.x)+len(model.y)
+        self.model_info['num_algebraic'] = num_algebraic = len(model.a)
+        self.model_info['num_controls'] = num_controls = len(model.u + model.v)
         self.model_info['num_path_constraints'] = len(model.pcns)
-        num_vars_per_step = num_states + num_slacks+ num_controls
+        num_vars_per_step = num_states + num_algebraic+ num_controls
 
         ############## construct the parametric mpc model ###############
+        mpc_time_vector = cs.MX.sym('t',PHL+RTL+1,1)
         mpc_model = deepcopy(model)
-        mpc_model.t.val = cs.MX.sym('t',PHL+RTL+1,1)
+
+
+        # impose the initial state with a set of initial constraints
+        mpc_model.icns.extend([oc.eq(v.sym,0,'<initial_state>') for v in mpc_model.x+mpc_model.y])
+
+        # we do not support non-linear terminal costs in the shift yet (use a slack to represent the terminal cost as a terminal constraint)
+        if not model.may is None and oc.get_order(model.may,syms_) > 1:
+             mpc_model.a.append(oc.variable('terminal_cost_slack',-cs.DM.inf(),cs.DM.inf(),0))
+             mpc_model.pcns = [oc.eq(mpc_model.a[-1].sym,0.0,'<terminal_cost_reformulation>')] + mpc_model.pcns
+             mpc_model.fcns.append(oc.leq(mpc_model.may,mpc_model.a[-1].sym,'<terminal_cost_reformulation>'))
+             mpc_model.may = mpc_model.a[-1].sym
+             self.model_info['num_algebraic'] += 1
 
         # assign variables to the inputs for later definition
         for k in range(len(model.i)):
              mpc_model.i[k].val = cs.MX.sym(model.i[k].nme,PHL+RTL+1,1)
-
-        # use dummy inputs to vehiculate the measured state info
-        mstate_sym = {}; mstate_val = {}
-        for v in mpc_model.x+mpc_model.z:
-            mpc_model.i.append(oc.input(v.nme,cs.MX.sym(v.nme,PHL+RTL+1,1)))
-            mstate_sym[v.nme] = mpc_model.i[-1].sym
-            mstate_val[v.nme] = mpc_model.i[-1].val
-
-        # collect the variables used to define the inputs (also the dummy ones)
-        param_symbols = [mpc_model.t.val]+[i.val for i in mpc_model.i]
-
-        # transform the variable parameters in functions of the initial state and the inputs
-        if not model.p is None:
-            mpc_model.p = []
-            for v in model.p:
-                expression_ = cs.substitute(self.options['variable_parameters_exp'][v.nme],cs.vcat([vv.sym for vv in model.x+model.z]),cs.vcat([mstate_sym[vv.nme] for vv in model.x+model.z]))
-                for k in range(len(mpc_model.ode)):  mpc_model.ode[k] = cs.substitute(mpc_model.ode[k],v.sym,expression_)
-                for k in range(len(mpc_model.dtr)):  mpc_model.dtr[k] = cs.substitute(mpc_model.dtr[k],v.sym,expression_)
-                for k in range(len(mpc_model.pcns)): mpc_model.pcns[k].exp = cs.substitute(mpc_model.pcns[k].exp,v.sym,expression_)
-                for k in range(len(mpc_model.icns)): mpc_model.icns[k].exp = cs.substitute(mpc_model.icns[k].exp,v.sym,expression_)
-                for k in range(len(mpc_model.fcns)): mpc_model.fcns[k].exp = cs.substitute(mpc_model.fcns[k].exp,v.sym,expression_)
-                mpc_model.lag = cs.substitute(mpc_model.lag,v.sym,expression_)
-                mpc_model.dpn = cs.substitute(mpc_model.dpn,v.sym,expression_)
-                mpc_model.may = cs.substitute(mpc_model.may,v.sym,expression_)
+        param_symbols = [mpc_time_vector]+[i.val for i in mpc_model.i]
 
         # construct a parametric optimization problem describing the mpc short time horizon
         self.mpc_problem = oc.o_problem()
-        oc.multipleShooting(mpc_model,self.mpc_problem,{'integration_opts':self.options['integration_opts']},False)
+        oc.multiple_shooting(mpc_model,self.mpc_problem,mpc_time_vector,{'integration_opts':self.options['integration_opts']},True)
 
         # relax the tail (if required) #TODO check what happens to the sos1 groups
-        for k in range(PHL*num_vars_per_step+num_states+num_slacks,len(self.mpc_problem.var['dsc'])):
+        for k in range(PHL*num_vars_per_step+num_states+num_algebraic,len(self.mpc_problem.var['dsc'])):
             self.mpc_problem.var['dsc'][k] = False
 
         # store the parametric version of the constraint set and variable bounds
-        self.parametric_definitions = {
-            'cexp' : cs.Function('cexp_par',[self.mpc_problem.var['sym']]+param_symbols,[self.mpc_problem.cns['exp']]),
-            'oexp' : cs.Function('oexp_par',[self.mpc_problem.var['sym']]+param_symbols,[self.mpc_problem.obj['exp']]),
+        self.problem_functions = {
+            'cns': oc.CvxFuncForJulia('cns',[self.mpc_problem.var['sym']]+param_symbols,self.mpc_problem.cns['exp']),
+            'obj': oc.LinQuadForJulia('obj',[self.mpc_problem.var['sym']]+param_symbols,oc.sum1(self.mpc_problem.obj['exp']))
+        }
+
+        # compile the parametric function created
+        self.problem_functions['cns'].compile(oc.home_dir+'/temp_jit_files')
+
+        # store the parametric version of the terminal part of the constraint set and the objective (for shift)
+        num_constraints_per_step = num_states + len(mpc_model.pcns)
+        num_steps = PHL + RTL
+        self.problem_terminals = {
+            'cns': oc.CvxFuncForJulia('cns',[self.mpc_problem.var['sym']]+param_symbols,self.mpc_problem.cns['exp'][num_constraints_per_step*(num_steps-1):]),
+            'obj': oc.LinQuadForJulia('obj',[self.mpc_problem.var['sym']]+param_symbols,cs.sum1(self.mpc_problem.obj['exp'][num_steps-1:]))
         }
 
 
-        self.test = {
-            'cns': oc.CSfuncForJulia('cns',[self.mpc_problem.var['sym']]+param_symbols,self.mpc_problem.cns['exp']),
-            'obj': oc.CSfuncForJulia('obj',[self.mpc_problem.var['sym']]+param_symbols,self.mpc_problem.obj['exp'])
-        }
+        # load the OpenBB interface
+        self.openbb = oc.openbb.OpenBBinterface()
+        # load the python interface of the mpc addon
+        self.mpc_addon = oc.mpc_addon.MPC_addon(self.openbb)
+        # load some additional helper functions in OpenBB
+        self.openbb.eval_string('include(\"'+oc.home_dir+'/src/openbb_interface/helper_functions.jl\")')
 
-        # compile the parametric functions created
-        self.test['cns'].compile(oc.home_dir+'/temp_jit_files')
-        self.test['obj'].compile(oc.home_dir+'/temp_jit_files')
-        purposeful_error
+        # check for multiprocessing
+        if 'numProcesses' in self.options['OpenBB_opts'] and self.options['OpenBB_opts']['numProcesses'] > 1:
+            # prepare for multi-processing
+            current_num_procs = self.openbb.eval_string('nprocs()')
+            if current_num_procs < self.options['OpenBB_opts']['numProcesses']:
+                self.openbb.eval_string('addprocs('+str(self.options['OpenBB_opts']['numProcesses']-current_num_procs)+')')
+            self.openbb.eval_string('@sync for k in workers() @async remotecall_fetch(Main.eval,k,:(using OpenBB)) end')
 
-        # # create the subsolver workspace
-        # if self.minlp_solver == 'bonmin':
-        #     self.minlp_solver_workspace = oc.Bonmin_workspace(self.mpc_problem,self.options['minlp_solver_opts'],param_symbols)
-        #
-        # # collect timing statistics
-        # self.stats['times']['preprocessing'] = time() - start_time
-        # self.stats['times']['total'] += self.stats['times']['preprocessing']
-
-
-
-    def iterate(self,measured_state,input_vals,timeout=None):
-
-        # collect info
-        PHL = self.options['prediction_horizon_length']
-        RTL = self.options['relaxed_tail_length']
+        # collect timing statistics
+        self.stats['times']['preprocessing'] = time() - start_time
+        self.stats['times']['total'] += self.stats['times']['preprocessing']
 
 
-        # construct the state hystory if needed
-        if self.state_hystory is None:
-            self.state_hystory = {}
-            for v in self.model.x + self.model.z:
-                self.state_hystory[v.nme] = cs.repmat(measured_state[v.nme],PHL+RTL+1,1)
 
-        # collect parameter values
-        param_vals = [input_vals['t']]+[input_vals[i.nme] for i in self.model.i]+\
-                     [self.state_hystory[v.nme] for v in self.model.x+self.model.z]
+    def iterate(self,measured_state,input_vals,mode="relaxationOnly",iterations_for_lob_recomputation=0,timeout=None):
 
+        iteration_start_time = time()
         # generate the problem to solve in this iteration
         for k in range(self.model_info['num_states']):
-            self.mpc_problem.var['lob'][k] = measured_state[self.mpc_problem.var['nme'][k]]
-            self.mpc_problem.var['upb'][k] = measured_state[self.mpc_problem.var['nme'][k]]
-        self.mpc_problem.cns['exp'] = self.parametric_definitions['cexp'](self.mpc_problem.var['sym'],*param_vals)
-        self.mpc_problem.obj['exp'] = self.parametric_definitions['oexp'](self.mpc_problem.var['sym'],*param_vals)
+            self.mpc_problem.cns['lob'][k] = measured_state[self.mpc_problem.var['nme'][k]]
+            self.mpc_problem.cns['upb'][k] = measured_state[self.mpc_problem.var['nme'][k]]
 
+        # get the dictionaries that will be used to transfer the problem functions into julia
+        cns_extra_info = {'lob':oc.cs2list(self.mpc_problem.cns['lob']),
+                          'upb':oc.cs2list(self.mpc_problem.cns['upb'])}
+        cns_pack = self.problem_functions['cns'].pack_for_julia(input_vals,cns_extra_info)
+        (self.clib_id,cns_dictionary) = self.openbb.jl.load_constraint_set(cns_pack,self.clib_id)
+
+        obj_dictionary = self.problem_functions['obj'].pack_for_julia(input_vals)
+
+        var_dictionary = {"vals":oc.cs2list(self.mpc_problem.var['val']),
+                          "loBs":oc.cs2list(self.mpc_problem.var['lob']),
+                          "upBs":oc.cs2list(self.mpc_problem.var['upb']),
+                          "dscIndices":[k+1 for (k,val) in enumerate(self.mpc_problem.var['dsc']) if val]}
+
+        OpenBB_opts = self.options['OpenBB_opts']
+        OpenBB_opts.update({"optimalControlInfo":(self.model_info['num_states'],
+                                                  self.model_info['num_algebraic'],
+                                                  self.model_info['num_controls'])})
+
+
+        if self.status == 'new' or mode is None:
+            # create a new model
+            self.openbb.setup("HBB",{"varSet":var_dictionary,"cnsSet":cns_dictionary,"objFun":obj_dictionary},OpenBB_opts)
+            {'total':0.,'pre/post-processing':0.,'minlp_solver':{'nlp':0.,'mip':0.,'linearizations_generation':0.}}
+
+        else:
+            [measured_state[self.mpc_problem.var['nme'][k]] for k in range(self.model_info['num_states'])]
+
+            # shift the old model
+            measured_state_vec = [measured_state[self.mpc_problem.var['nme'][k]] for k in range(self.model_info['num_states'])]
+            self.mpc_addon.HBB_mpc_shift_assisted(1,{"varSet":var_dictionary,"cnsSet":cns_dictionary,"objFun":obj_dictionary},
+                                                     [],measured_state_vec,mode,iterations_for_lob_recomputation)
+
+        # shift last solution
+        varShift = (self.model_info['num_states']+self.model_info['num_algebraic']+self.model_info['num_controls'])
+        self.mpc_problem.var['val'][:-varShift] =  self.mpc_problem.var['val'][varShift:]
+        self.stats['times']['iterations']['pre/post-processing'] +=  time() - iteration_start_time
 
         # solve problem
-        sol_stats = oc.solve_with_bonmin(self.mpc_problem,{'print_level':1,'mi_solver_name':'cplex'})
-        results = self.mpc_problem.get_grouped_variables_value()
+        solver_start_time = time()
+        status0 = self.openbb.get_status()
+        numExploredNodes0 = self.openbb.workspace.mipStepWS.mipSolverWS.status.numExploredNodes
+        self.openbb.solve(self.mpc_problem.var['val'])
+        solution = self.openbb.get_best_feasible_node()
+        status1 = self.openbb.get_status()
+        nlp_time = status1['nlpTime'] - status0['nlpTime']
+        mip_time = status1['mipTime'] - status0['mipTime']
+        self.stats['times']['iterations']['minlp_solver']['total'] +=  time() - solver_start_time
+        self.stats['times']['iterations']['minlp_solver']['nlp'] += nlp_time
+        self.stats['times']['iterations']['minlp_solver']['mip'] += mip_time
+        self.stats['times']['iterations']['minlp_solver']['linearizations_generation'] += status1['rlxTime'] - status0['rlxTime']
+        self.stats['num_solves']['nlp'] += status1['numIterations']-status0['numIterations']
+        self.stats['num_solves']['qp'] += self.openbb.workspace.mipStepWS.mipSolverWS.status.numExploredNodes-numExploredNodes0
 
-        return results
+        if len(solution)>0:
+            self.status = 'solved'
+            self.mpc_problem.var['val'] = cs.DM(solution["primal"])
+        else:
+            raise NameError('MPCmachine: no solution found in iteration')
+
+
+        iteration_time = time() - iteration_start_time
+        self.stats['times']['iterations']['total'] += iteration_time
+        self.stats['times']['total'] += iteration_time
+        print("MPC: time per iteration =",iteration_time,"(nlp =",nlp_time,"mip =",mip_time,")")
+
+        return (solution["objUpB"],self.mpc_problem.get_grouped_variables_value())
