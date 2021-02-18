@@ -1,3 +1,8 @@
 temp_jit_files
 __pycache__
 temp*
+nonpublic_*
+documentation/*.aux
+documentation/*.log
+documentation/*.toc
+documentation/*.bib
