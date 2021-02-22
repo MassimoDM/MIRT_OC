@@ -1,9 +1,9 @@
 # @Author: Massimo De Mauri <massimo>
 # @Date:   2020-12-30T17:17:24+01:00
 # @Email:  massimo.demauri@protonmail.com
-# @Filename: MPCmachine.py
+# @Filename: MPCcontroller.py
 # @Last modified by:   massimo
-# @Last modified time: 2021-02-12T15:16:08+01:00
+# @Last modified time: 2021-02-22T20:01:10+01:00
 # @License: LGPL-3.0
 
 import casadi as cs
@@ -13,12 +13,13 @@ from warnings import warn
 from time import time
 from copy import deepcopy
 
-class MPCmachine:
+class MPCcontroller:
 
     def __init__(self,model,options = dict()):
 
         # declare object fields
         self.model = model
+        self.input_vals = None
         self.options = {}
         self.model_info = {}
         self.stats = {}
@@ -46,11 +47,11 @@ class MPCmachine:
 
         # check the model
         syms_ = [v.sym for v in model.x]+[v.sym for v in model.y]+[v.sym for v in model.a]+[v.sym for v in model.u + model.v]
-        if len(model.p) > 0 : raise NameError('MPCmachine is not suited to optimize parameters, please fix them or give them a state dependent expression using the \'varing_parameters_exp\' option')
-        if len(model.icns) > 0 : raise NameError('MPCmachine: initial constraints not supported')
+        if len(model.p) > 0 : raise NameError('MPCcontroller is not suited to optimize parameters, please fix them or give them a state dependent expression using the \'varing_parameters_exp\' option')
+        if len(model.icns) > 0 : raise NameError('MPCcontroller: initial constraints not supported')
         obj_ = 0.0
         if not model.lag is None: obj_ += model.lag
-        if not model.dpn is None: obj_ += model.dpn
+        if not model.ipn is None: obj_ += model.ipn
         if not model.may is None: obj_ += model.may
         if oc.get_order(obj_,syms_) > 2 :
             raise NameError("Objectives with order higher than 2 are not currently supported. Please, perform an epigraph reformulation of the objective.")
@@ -98,7 +99,7 @@ class MPCmachine:
         param_symbols = [mpc_time_vector]+[i.val for i in mpc_model.i]
 
         # construct a parametric optimization problem describing the mpc short time horizon
-        self.mpc_problem = oc.o_problem()
+        self.mpc_problem = oc.Problem()
         oc.multiple_shooting(mpc_model,self.mpc_problem,mpc_time_vector,{'integration_opts':self.options['integration_opts']},True)
 
         # relax the tail (if required) #TODO check what happens to the sos1 groups
@@ -144,9 +145,20 @@ class MPCmachine:
 
 
 
-    def iterate(self,measured_state,input_vals,mode="relaxationOnly",iterations_for_lob_recomputation=0,timeout=None):
+    def iterate(self,shift_size,measured_state,new_input_vals,mode="relaxationOnly",iterations_for_lob_recomputation=0,timeout=None):
 
         iteration_start_time = time()
+
+        # collect the value for the inputs
+        if self.input_vals is None:
+            self.input_vals = deepcopy(new_input_vals)
+        else:
+            for k in self.input_vals.keys():
+                print(self.input_vals[k][shift_size:],new_input_vals[k])
+                self.input_vals[k] = cs.vertcat(self.input_vals[k][shift_size:],new_input_vals[k])
+
+
+
         # generate the problem to solve in this iteration
         for k in range(self.model_info['num_states']):
             self.mpc_problem.cns['lob'][k] = measured_state[self.mpc_problem.var['nme'][k]]
@@ -155,10 +167,10 @@ class MPCmachine:
         # get the dictionaries that will be used to transfer the problem functions into julia
         cns_extra_info = {'lob':oc.cs2list(self.mpc_problem.cns['lob']),
                           'upb':oc.cs2list(self.mpc_problem.cns['upb'])}
-        cns_pack = self.problem_functions['cns'].pack_for_julia(input_vals,cns_extra_info)
+        cns_pack = self.problem_functions['cns'].pack_for_julia(self.input_vals,cns_extra_info)
         (self.clib_id,cns_dictionary) = self.openbb.jl.load_constraint_set(cns_pack,self.clib_id)
 
-        obj_dictionary = self.problem_functions['obj'].pack_for_julia(input_vals)
+        obj_dictionary = self.problem_functions['obj'].pack_for_julia(self.input_vals)
 
         var_dictionary = {"vals":oc.cs2list(self.mpc_problem.var['val']),
                           "loBs":oc.cs2list(self.mpc_problem.var['lob']),
@@ -181,7 +193,7 @@ class MPCmachine:
 
             # shift the old model
             measured_state_vec = [measured_state[self.mpc_problem.var['nme'][k]] for k in range(self.model_info['num_states'])]
-            self.mpc_addon.HBB_mpc_shift_assisted(1,{"varSet":var_dictionary,"cnsSet":cns_dictionary,"objFun":obj_dictionary},
+            self.mpc_addon.HBB_mpc_shift_assisted(shift_size,{"varSet":var_dictionary,"cnsSet":cns_dictionary,"objFun":obj_dictionary},
                                                      [],measured_state_vec,mode,iterations_for_lob_recomputation)
 
         # shift last solution
@@ -209,7 +221,7 @@ class MPCmachine:
             self.status = 'solved'
             self.mpc_problem.var['val'] = cs.DM(solution["primal"])
         else:
-            raise NameError('MPCmachine: no solution found in iteration')
+            raise NameError('MPCcontroller: no solution found in iteration')
 
 
         iteration_time = time() - iteration_start_time

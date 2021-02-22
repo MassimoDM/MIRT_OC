@@ -9,7 +9,7 @@ import MIRT_OC as oc
 import copy
 
 
-class o_problem:
+class Problem:
 
     def __init__(self,name = ''):
         self.name = name
@@ -25,7 +25,7 @@ class o_problem:
 
     def deepcopy(self):
 
-        newp = o_problem()
+        newp = Problem()
         newp.name = self.name
 
         newp.var['sym'] = oc.MX.sym('v',self.var['sym'].shape)
