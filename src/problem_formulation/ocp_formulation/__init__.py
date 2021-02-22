@@ -10,7 +10,7 @@
 
 from .constraint import *
 from .input import *
-from .oc_problem import *
+from .OCmodel import *
 from .variable import *
 from .sos1_constraint import *
 

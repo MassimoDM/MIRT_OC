@@ -464,9 +464,9 @@ def multiple_shooting(model,problem,time_vector,options=None,unpack_objective=Fa
             problem.obj['exp'] += cs.sum2(tmp)
 
     # add discrete penalties
-    if not model.dpn is None:
-        dpnf = cs.Function('dpn',[cs.vertcat(tsym,psyms,xsyms,ysyms,asyms,isyms,usyms,vsyms,dtsym)],[model.dpn]).map(nSteps)
-        tmp = dpnf(cs.vertcat(shooting['t'][:-1],shooting['x'][:,:-1],shooting['y'][:,:-1],shooting['a'][:,:-1],shooting['p'][:,:-1],shooting['i'][:,:-1],shooting['u'],shooting['v'],shooting['dt']))
+    if not model.ipn is None:
+        ipnf = cs.Function('ipn',[cs.vertcat(tsym,psyms,xsyms,ysyms,asyms,isyms,usyms,vsyms,dtsym)],[model.ipn]).map(nSteps)
+        tmp = ipnf(cs.vertcat(shooting['t'][:-1],shooting['x'][:,:-1],shooting['y'][:,:-1],shooting['a'][:,:-1],shooting['p'][:,:-1],shooting['i'][:,:-1],shooting['u'],shooting['v'],shooting['dt']))
 
         if unpack_objective:
             problem.obj['exp'][:-1] += tmp.T

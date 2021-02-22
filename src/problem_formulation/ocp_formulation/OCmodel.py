@@ -11,7 +11,7 @@ import casadi as cs
 import MIRT_OC as oc
 
 
-class oc_problem:
+class OCmodel:
 
     def __init__(self,name):
         self.name = name
@@ -32,7 +32,7 @@ class oc_problem:
 
         self.may = None             # end cost
         self.lag = None             # stage cost
-        self.dpn = None             # disctrete stage cost
+        self.ipn = None             # disctrete stage cost
 
         self.t = cs.MX.sym("t")    # time vector
         self.dt = cs.MX.sym("dt")   # represents the time between one time step and the next
@@ -47,7 +47,7 @@ class oc_problem:
     def copy(self):
 
 
-       new_model = oc_problem(self.name)
+       new_model = OCmodel(self.name)
        new_model.t = self.t
        new_model.i = self.i
        new_model.p = self.p
@@ -66,7 +66,7 @@ class oc_problem:
 
        new_model.may = self.may
        new_model.lag = self.lag
-       new_model.dpn = self.dpn
+       new_model.ipn = self.ipn
 
        return new_model
 
@@ -154,7 +154,7 @@ class oc_problem:
             out += '\n'
 
         if not self.lag is None: out += 'Lagrange\'s obj.: ' + space + str(self.lag)+'\n\n'
-        if not self.dpn is None: out += 'Instataneous penalty: ' + space + str(self.dpn)+'\n\n'
+        if not self.ipn is None: out += 'Instataneous penalty: ' + space + str(self.ipn)+'\n\n'
         if not self.may is None: out += 'Mayer\'s obj.: ' + space + str(self.may)+'\n\n'
 
         if not self.sos1 is None:
@@ -330,16 +330,16 @@ class oc_problem:
             # remove the lagrangian objective
             self.lag = None
 
-        if not self.dpn is None and oc.get_order(self.dpn,var_list)>max_order:
+        if not self.ipn is None and oc.get_order(self.ipn,var_list)>max_order:
 
             reformulation_needed = True
 
             # collect results
-            stage_info[0] += self.dpn
+            stage_info[0] += self.ipn
             stage_info[1] += minima[1]
 
             # remove the discrete penalties
-            self.dpn = oc.MX(0.0)
+            self.ipn = oc.MX(0.0)
 
 
         if not self.may is None and oc.get_order(self.may,var_list)>max_order:
@@ -361,7 +361,7 @@ class oc_problem:
 
             # handle the slack in the intermediate steps
             if len(cs.symvar(stage_info[0])) > 0:
-                self.dpn += slack_var.sym
+                self.ipn += slack_var.sym
                 self.pcns.append(oc.leq(stage_info[0],slack_var.sym,'<epigraph_cns>'))
                 if stage_info[1] > -oc.DM.inf():
                     self.pcns.append(oc.geq(slack_var.sym,stage_info[1],'<epigraph_cns>'))
@@ -445,7 +445,7 @@ class oc_problem:
 #
 #                         # adapt the objective
 #                         if not self.lag is None: self.lag = oc.substitute(self.lag,var.sym,subexp[var.nme])
-#                         if not self.dpn is None: self.dpn = oc.substitute(self.dpn,var.sym,subexp[var.nme])
+#                         if not self.ipn is None: self.ipn = oc.substitute(self.ipn,var.sym,subexp[var.nme])
 #                         if not self.may is None: self.may = oc.substitute(self.may,var.sym,subexp[var.nme])
 #
 #
@@ -606,17 +606,17 @@ class oc_problem:
 #                             tmp_exp += vartoadd[i].sym*oc.substitute(self.lag,oldsyms,oc.DM(ass))
 #                         self.lag = tmp_exp
 #
-#                 if not self.dpn is None and oc.which_depends(self.dpn,oldsyms,1,True)[0]:
+#                 if not self.ipn is None and oc.which_depends(self.ipn,oldsyms,1,True)[0]:
 #                     tmp_exp = oc.MX(0)
 #                     for i,ass in enumerate(assignments):
-#                         tmp_exp += vartoadd[i].sym*oc.substitute(self.dpn,oldsyms,oc.DM(ass))
-#                     self.dpn = tmp_exp
+#                         tmp_exp += vartoadd[i].sym*oc.substitute(self.ipn,oldsyms,oc.DM(ass))
+#                     self.ipn = tmp_exp
 #
 #                 if not self.may is None and oc.which_depends(self.may,oldsyms,1,True)[0]:
 #                     tmp_exp = oc.MX(0)
 #                     for i,ass in enumerate(assignments):
 #                         tmp_exp += vartoadd[i].sym*oc.substitute(self.may,oldsyms,oc.DM(ass))
-#                     self.dpn = tmp_exp
+#                     self.ipn = tmp_exp
 #
 #
 #                 # add a new sos constraint

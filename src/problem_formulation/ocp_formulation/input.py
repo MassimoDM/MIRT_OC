@@ -24,7 +24,8 @@ class input:
         self.val = val
 
     def __str__(self):
-
+        if self.val is None:
+            return self.nme
         if is_numeric(self.val):
             if self.val.numel() < 10:
                 return self.nme + ' = ' + str(self.val)
@@ -33,4 +34,4 @@ class input:
         elif is_symbolic(self.val):
             return self.nme + ' = ' + self.val.name()
         else:
-            print('ooh')
+            raise NameError('invalid .val field')
