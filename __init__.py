@@ -3,7 +3,7 @@
 # @Email:  massimo.demauri@protonmail.com
 # @Filename: __init__.py
 # @Last modified by:   massimo
-# @Last modified time: 2021-01-18T12:35:51+01:00
+# @Last modified time: 2021-02-23T13:55:05+01:00
 # @License: LGPL-3.0
 
 
@@ -24,8 +24,7 @@ import importlib.util
 from .src.utils.casadiUtils                                         import *
 from .src.utils.ParametricFunction                                  import *
 from .src.utils.mathUtils                                           import *
-from .src.utils.solve_with_bonmin                                   import solve_with_bonmin
-from .src.utils.proximalOA                                          import proximalOA
+
 # import main components
 from .src.problem_formulation                                       import *
 from .src.integration                                               import *
