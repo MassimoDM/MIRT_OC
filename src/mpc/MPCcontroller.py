@@ -29,7 +29,7 @@ class MPCcontroller:
 
         # default options
         self.options['printLevel'] = 0
-        self.options['OpenBB_opts'] = {'numProcesses':1}
+        self.options['hbbSettings'] = {'numProcesses':1}
         self.options['integration_opts'] = None
         self.options['max_iteration_time'] = cs.inf
         self.options['relaxed_tail_length'] = 0
@@ -132,11 +132,11 @@ class MPCcontroller:
         self.openbb.eval_string('include(\"'+oc.home_dir+'/src/openbb_interface/helper_functions.jl\")')
 
         # check for multiprocessing
-        if 'numProcesses' in self.options['OpenBB_opts'] and self.options['OpenBB_opts']['numProcesses'] > 1:
+        if 'numProcesses' in self.options['hbbSettings'] and self.options['hbbSettings']['numProcesses'] > 1:
             # prepare for multi-processing
             current_num_procs = self.openbb.eval_string('nprocs()')
-            if current_num_procs < self.options['OpenBB_opts']['numProcesses']:
-                self.openbb.eval_string('addprocs('+str(self.options['OpenBB_opts']['numProcesses']-current_num_procs)+')')
+            if current_num_procs < self.options['hbbSettings']['numProcesses']:
+                self.openbb.eval_string('addprocs('+str(self.options['hbbSettings']['numProcesses']-current_num_procs)+')')
             self.openbb.eval_string('@sync for k in workers() @async remotecall_fetch(Main.eval,k,:(using OpenBB)) end')
 
         # collect timing statistics
@@ -177,15 +177,15 @@ class MPCcontroller:
                           "upBs":oc.cs2list(self.mpc_problem.var['upb']),
                           "dscIndices":[k+1 for (k,val) in enumerate(self.mpc_problem.var['dsc']) if val]}
 
-        OpenBB_opts = self.options['OpenBB_opts']
-        OpenBB_opts.update({"optimalControlInfo":(self.model_info['num_states'],
+        hbbSettings = self.options['hbbSettings']
+        hbbSettings.update({"optimalControlInfo":(self.model_info['num_states'],
                                                   self.model_info['num_algebraic'],
                                                   self.model_info['num_controls'])})
 
 
         if self.status == 'new' or mode is None:
             # create a new model
-            self.openbb.setup("HBB",{"varSet":var_dictionary,"cnsSet":cns_dictionary,"objFun":obj_dictionary},OpenBB_opts)
+            self.openbb.setup("HBB",{"varSet":var_dictionary,"cnsSet":cns_dictionary,"objFun":obj_dictionary},hbbSettings)
             {'total':0.,'pre/post-processing':0.,'minlp_solver':{'nlp':0.,'mip':0.,'linearizations_generation':0.}}
 
         else:

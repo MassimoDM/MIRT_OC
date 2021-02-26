@@ -286,13 +286,12 @@ class OCmodel:
                 if self.v[k].nme in vval_dict:
                     self.v[k].val = vval_dict[self.v[k].nme]
 
-    def epigraph_reformulation(self,minima = [-oc.DM.inf(),-oc.DM.inf(),-oc.DM.inf()],
-                                     max_order = 1, integration_opts = None):
+    def epigraph_reformulation(self,max_orders = [1,1,1], integration_opts = None):
 
         # initialize info
         reformulation_needed = False
-        stage_info = [oc.MX(0),oc.DM(0)]
-        terminal_info = [oc.MX(0),oc.DM(0)]
+        stage_info = oc.MX(0)
+        terminal_info = oc.MX(0)
 
         # create list of variables to detect order with
         var_list = []
@@ -303,7 +302,7 @@ class OCmodel:
         if self.u + self.v != []: var_list += [v.sym for v in self.u + self.v]
 
         # reformulate each type of objective separately
-        if not self.lag is None and oc.get_order(self.lag,var_list)>max_order:
+        if not self.lag is None and oc.get_order(self.lag,var_list)>max_orders[0]:
 
             reformulation_needed = True
 
@@ -324,31 +323,28 @@ class OCmodel:
             tmp_exp = intg.call({'x0':0,'p':oc.vertcat(psyms,xsyms,ysyms,zsyms,isyms,usyms,vsyms,self.t.sym,self.dt.sym)})['xf']
 
             # collect results
-            stage_info[0] += tmp_exp
-            stage_info[1] += minima[0]
+            stage_info += tmp_exp
 
             # remove the lagrangian objective
             self.lag = None
 
-        if not self.ipn is None and oc.get_order(self.ipn,var_list)>max_order:
+        if not self.ipn is None and oc.get_order(self.ipn,var_list)>max_orders[1]:
 
             reformulation_needed = True
 
             # collect results
-            stage_info[0] += self.ipn
-            stage_info[1] += minima[1]
+            stage_info += self.ipn
 
             # remove the discrete penalties
             self.ipn = oc.MX(0.0)
 
 
-        if not self.may is None and oc.get_order(self.may,var_list)>max_order:
+        if not self.may is None and oc.get_order(self.may,var_list)>max_orders[2]:
 
             reformulation_needed = True
 
             # collect results
-            terminal_info[0] += self.may
-            terminal_info[1] += minima[2]
+            terminal_info += self.may
 
             # remove the mayer term
             self.may = oc.MX(0.0)
@@ -360,22 +356,18 @@ class OCmodel:
             self.a.append(slack_var)
 
             # handle the slack in the intermediate steps
-            if len(cs.symvar(stage_info[0])) > 0:
+            if len(cs.symvar(stage_info)) > 0:
                 self.ipn += slack_var.sym
-                self.pcns.append(oc.leq(stage_info[0],slack_var.sym,'<epigraph_cns>'))
-                if stage_info[1] > -oc.DM.inf():
-                    self.pcns.append(oc.geq(slack_var.sym,stage_info[1],'<epigraph_cns>'))
+                self.pcns.append(oc.leq(stage_info,slack_var.sym,'<epigraph_cns>'))
             else:
                 self.pcns.append(oc.eq(slack_var.sym,0.0,'<epigraph_cns>'))
 
 
             # handle the slack in the terminal step
             if self.may is None: self.may = cs.MX(0.0)
-            if len(cs.symvar(terminal_info[0])) > 0:
+            if len(cs.symvar(terminal_info)) > 0:
                 self.may += slack_var.sym
-                self.fcns.append(oc.leq(terminal_info[0],slack_var.sym,'<epigraph_cns>'))
-                if terminal_info[1] > -oc.DM.inf():
-                    self.fcns.append(oc.geq(slack_var.sym,terminal_info[1],'<epigraph_cns>'))
+                self.fcns.append(oc.leq(terminal_info,slack_var.sym,'<epigraph_cns>'))
             else:
                 self.fcns.append(oc.geq(slack_var.sym,0.0,'<epigraph_cns>'))
 

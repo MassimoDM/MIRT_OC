@@ -204,7 +204,7 @@ model.ipn = 0.4*45.6*ICE_Fstart(ICE_Prat)*switch.sym
 model.may = 200*(-cs.log((SoC.sym-SoC_min)/(SoC_max-SoC_min)) - cs.log((SoC_max-SoC.sym)/(SoC_max-SoC_min)) + 2*cs.log(.5))
 
 # model.may = (200*BT_Erat*SoCcoeff.sym*(1-SoC.sym))**2 # 200g/kWh is the maximum theoretical efficiency for engines
-model.epigraph_reformulation(max_order = 2,integration_opts={'schema':'rk4','n_steps':1})
+model.epigraph_reformulation(max_orders = [1,1,2],integration_opts={'schema':'rk4','n_steps':1})
 
 print(model)
 print('\n---------------------------------------------------------------------------------')
@@ -233,12 +233,11 @@ shift_style = "constraintsOnly"
 # shift_style = "fullRTI"
 
 mpc_options = {'max_iteration_time':oc.inf,
-               'OpenBB_opts':{'verbose':True,'conservativismLevel':conservativism_level,"relativeGapTolerance":1e-4,
+               'hbbSettings':{'verbose':True,'conservativismLevel':conservativism_level,"relativeGapTolerance":1e-4,
                               'nlpProcesses':nlpProcesses,'mipProcesses':mipProcesses,'nlpStepType':('OAnlpStep',),
                               'nlpSettings':{'subsolverName':'IPOPT','constr_viol_tol':1e-5},
                               'mipSettings':{'verbose':True,
                                              'withBoundsPropagation':False,
-                                             'expansionPriorityRule':("lower_dualTradeoff",),
                                              'subsolverSettings':{'subsolverName':subsolverName}}},
                'integration_opts':{'schema':'rk4','n_steps':1},
                'prediction_horizon_length':PHL,'relaxed_tail_length':RTL,
@@ -247,7 +246,7 @@ mpc_options = {'max_iteration_time':oc.inf,
 
 
 # generate the mpc controller
-mpc_machine = oc.MPCcontroller(model,mpc_options)
+mpc_controller = oc.MPCcontroller(model,mpc_options)
 
 # define the first measured state
 measured_state = {'SoC':SoC_start,'F':TNK_Finit,'OFFstate':1.0,'GEARstate':0.0}
@@ -273,7 +272,7 @@ for i in range(num_iterations):
     print('MPC: Iteration =',i+1)
 
     # perform mpc iteration
-    iteration_objective, iteration_results = mpc_machine.iterate(shift_size,measured_state,new_input_values,shift_style,0)
+    iteration_objective, iteration_results = mpc_controller.iterate(shift_size,measured_state,new_input_values,shift_style,0)
 
     print("MPC: Optimal Objective =",iteration_objective)
 
@@ -299,8 +298,8 @@ for i in range(num_iterations):
 
 print('\n---------------------------------------------------------------------------------')
 print('Solution time: ',time()-start_time)
-print('Timings: ',mpc_machine.stats['times'])
-print('#Solves: ',mpc_machine.stats['num_solves'])
+print('Timings: ',mpc_controller.stats['times'])
+print('#Solves: ',mpc_controller.stats['num_solves'])
 print('---------------------------------------------------------------------------------\n')
 
 
