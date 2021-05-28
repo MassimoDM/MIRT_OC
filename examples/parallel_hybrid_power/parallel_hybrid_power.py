@@ -220,7 +220,7 @@ SoCcoeff_f = cs.Function('SoCcoeff',[v.sym for v in model.x+model.y],[1.0 - (SoC
 
 # main parameters
 RTL = 0 # relaxed tail length
-PHL = 15 # prediction window length
+PHL = 18 # prediction window length
 shift_size = 1
 num_iterations = 12
 subsolverName = 'CLP'
@@ -478,5 +478,8 @@ for p in range(n_plots):
     ax0.text(x0+text_space,y0+(p+.5)*(yf-y0)/n_plots,titles[p],font_titles)
     ax0.text(xf-text_space,y0+(p+.5)*(yf-y0)/n_plots,units[p],font_units)
 
-manager = plt.get_current_fig_manager()
-manager.window.showMaximized()
+
+plt.savefig("figure.png")
+plt.show()
+# manager = plt.get_current_fig_manager()
+# manager.window.showMaximized()

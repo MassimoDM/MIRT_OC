@@ -11,7 +11,7 @@ import numpy as np
 import MIRT_OC as oc
 from warnings import warn
 from time import time
-from copy import deepcopy
+from copy import copy, deepcopy
 
 class MPCcontroller:
 
@@ -79,7 +79,7 @@ class MPCcontroller:
 
         ############## construct the parametric mpc model ###############
         mpc_time_vector = cs.MX.sym('t',PHL+RTL+1,1)
-        mpc_model = deepcopy(model)
+        mpc_model = copy(model)
 
 
         # impose the initial state with a set of initial constraints
